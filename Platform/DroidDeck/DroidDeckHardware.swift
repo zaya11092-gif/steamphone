@@ -73,7 +73,7 @@ enum DroidDeckBuildConfig {
     /// GitHub release; overridable for testing via UserDefaults key
     /// "DroidDeckImageURL" (e.g. pointing at a CI artifact).
     static var imageDownloadURL: URL {
-        let fallback = "https://github.com/droiddeck-ios/droiddeck-ios/releases/download/v\(imageVersion)/DroidDeckOS-\(imageVersion)-arm64.qcow2"
+        let fallback = "https://github.com/zaya11092-gif/steamphone/releases/download/v\(imageVersion)/DroidDeckOS-\(imageVersion)-arm64.qcow2"
         if let override = UserDefaults.standard.string(forKey: "DroidDeckImageURL"), let url = URL(string: override) {
             return url
         }
