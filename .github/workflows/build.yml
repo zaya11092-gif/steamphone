@@ -111,7 +111,7 @@ jobs:
           [[ "$(xcode-select -p)" == "${{ env.BUILD_XCODE_PATH }}"* ]] || sudo xcode-select -s "${{ env.BUILD_XCODE_PATH }}"
       - name: Build
         run: |
-          ./scripts/build_utm.sh -k iphoneos -s ${{ matrix.configuration.scheme }} -a arm64 -o build
+          ./scripts/build_utm.sh -k iphoneos -s ${{ matrix.configuration.scheme }} -a arm64 -o UTM
           tar -acf UTM.xcarchive.tgz UTM.xcarchive
       - name: Upload Archive
         uses: actions/upload-artifact@v4
