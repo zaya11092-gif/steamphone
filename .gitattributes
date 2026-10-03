@@ -1,0 +1,15 @@
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.pbxproj text
+*.plist text
+*.entitlements text
+*.xcconfig text
+*.png binary
+*.icns binary
+*.webm binary
+*.tzst binary
+*.zst binary
+*.qcow2 binary

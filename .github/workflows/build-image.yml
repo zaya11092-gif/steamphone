@@ -1,0 +1,46 @@
+name: Build DroidDeckOS Image
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      image_version:
+        description: 'Image version tag (e.g. 0.1.0)'
+        required: false
+        default: ''
+
+env:
+  IMAGE_VERSION: ${{ github.event.inputs.image_version || github.ref_name }}
+
+jobs:
+  build-image:
+    name: Build guest disk image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          sudo docker image prune -af || true
+          df -h /
+      - name: Build image
+        run: |
+          sudo ./image/build-image.sh "$IMAGE_VERSION"
+      - name: Checksum
+        run: |
+          cd image/out && sha256sum *.qcow2 > SHA256SUMS && cat SHA256SUMS
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidDeckOS-image
+          path: image/out/
+      - name: Upload Release Asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            image/out/*.qcow2
+            image/out/SHA256SUMS

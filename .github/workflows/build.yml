@@ -1,0 +1,160 @@
+name: Build
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+    paths-ignore:
+      - 'LICENSE*'
+      - '**.md'
+      - 'gpu-rd/**'
+      - 'image/**'
+  pull_request:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      rebuild_sysroot:
+        description: 'Force rebuild sysroot?'
+        required: true
+        default: 'false'
+
+env:
+  BUILD_XCODE_PATH: ${{ vars.HOST_XCODE_PATH || '/Applications/Xcode.app' }}
+  RUNNER_IMAGE: macos-15
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 60
+
+jobs:
+  build-sysroot:
+    name: Build Sysroot (${{ matrix.platform }}-${{ matrix.arch }})
+    runs-on: ${{ env.RUNNER_IMAGE }}
+    strategy:
+      matrix:
+        arch: [arm64]
+        platform: [ios, ios-tci]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Xcode
+        shell: bash
+        run: |
+          [[ "$(xcode-select -p)" == "${{ env.BUILD_XCODE_PATH }}"* ]] || sudo xcode-select -s "${{ env.BUILD_XCODE_PATH }}"
+      - name: Check Cache
+        id: cache-sysroot
+        uses: actions/cache/restore@v4
+        with:
+          path: ./sysroot-${{ matrix.platform }}-${{ matrix.arch }}
+          key: ${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh', 'scripts/fixup.sh') }}-${{ hashFiles('patches/**') }}-${{ github.sha }}
+          restore-keys: ${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh', 'scripts/fixup.sh') }}-${{ hashFiles('patches/**') }}
+          lookup-only: github.event_name != 'release'
+      - name: Setup Path
+        shell: bash
+        run: |
+          echo "/usr/local/opt/bison/bin:/opt/homebrew/opt/bison/bin" >> $GITHUB_PATH
+      - name: Install Requirements
+        if: steps.cache-sysroot.outputs.cache-matched-key == '' || github.event.inputs.rebuild_sysroot == 'true'
+        run: |
+          brew uninstall cmake || true
+          brew install bison pkg-config gettext glib-utils libgpg-error nasm make meson cmake
+          brew install llvm spirv-llvm-translator libxcb libxrandr
+          pip3 install --break-system-packages --user six pyparsing pyyaml setuptools distlib mako
+          rm -f /usr/local/lib/pkgconfig/*.pc
+      - name: Build Sysroot
+        if: steps.cache-sysroot.outputs.cache-matched-key == '' || github.event.inputs.rebuild_sysroot == 'true'
+        run: ./scripts/build_dependencies.sh -p ${{ matrix.platform }} -a ${{ matrix.arch }}
+        env:
+          NCPU: ${{ endsWith(matrix.platform, '-tci') && '1' || '0' }} # TCI builds exhaust memory with parallel jobs
+      - name: Compress Sysroot
+        if: github.event_name == 'release'
+        run: tar -acf sysroot.tgz sysroot*
+      - name: Upload Sysroot
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sysroot-${{ matrix.platform }}-${{ matrix.arch }}
+          path: sysroot.tgz
+      - name: Save Cache
+        if: steps.cache-sysroot.outputs.cache-matched-key == ''
+        uses: actions/cache/save@v4
+        with:
+          path: ./sysroot-${{ matrix.platform }}-${{ matrix.arch }}
+          key: ${{ steps.cache-sysroot.outputs.cache-primary-key }}
+          upload-chunk-size: 1048576
+
+  build-app:
+    name: Build App (${{ matrix.configuration.scheme }})
+    runs-on: ${{ env.RUNNER_IMAGE }}
+    needs: build-sysroot
+    strategy:
+      matrix:
+        configuration:
+          - {platform: "ios", scheme: "iOS"}
+          - {platform: "ios-tci", scheme: "iOS-SE"}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Cache Sysroot
+        id: cache-sysroot
+        uses: actions/cache/restore@v4
+        with:
+          path: ./sysroot-${{ matrix.configuration.platform }}-arm64
+          key: ${{ matrix.configuration.platform }}-arm64-${{ hashFiles('scripts/build_dependencies.sh', 'scripts/fixup.sh') }}-${{ hashFiles('patches/**') }}
+          fail-on-cache-miss: true
+      - name: Setup Xcode
+        shell: bash
+        run: |
+          [[ "$(xcode-select -p)" == "${{ env.BUILD_XCODE_PATH }}"* ]] || sudo xcode-select -s "${{ env.BUILD_XCODE_PATH }}"
+      - name: Build
+        run: |
+          ./scripts/build_utm.sh -k iphoneos -s ${{ matrix.configuration.scheme }} -a arm64 -o build
+          tar -acf UTM.xcarchive.tgz UTM.xcarchive
+      - name: Upload Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Archive-${{ matrix.configuration.scheme }}
+          path: UTM.xcarchive.tgz
+
+  package-ios:
+    name: Package IPA (${{ matrix.configuration.name }})
+    runs-on: ${{ env.RUNNER_IMAGE }}
+    needs: build-app
+    strategy:
+      matrix:
+        configuration:
+          - {scheme: "iOS", mode: "ipa", name: "DroidDeck-JIT.ipa", path: "UTM.ipa"}
+          - {scheme: "iOS-SE", mode: "ipa-se", name: "DroidDeck-SE.ipa", path: "UTM SE.ipa"}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Archive-${{ matrix.configuration.scheme }}
+      - name: Install ldid
+        run: brew install ldid
+      - name: Fakesign IPA
+        run: |
+          tar -xf UTM.xcarchive.tgz
+          ./scripts/package.sh ${{ matrix.configuration.mode }} UTM.xcarchive .
+          mv "${{ matrix.configuration.path }}" "${{ matrix.configuration.name }}"
+      - name: Upload Artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.configuration.name }}
+          path: ${{ matrix.configuration.name }}
+      - name: Upload Release Asset
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ matrix.configuration.name }}
+          asset_name: ${{ matrix.configuration.name }}
+          asset_content_type: application/octet-stream
