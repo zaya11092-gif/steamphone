@@ -240,6 +240,12 @@ final class DroidDeckOSManager: ObservableObject {
         if let oldVM = existingVM {
             try? await data.delete(vm: oldVM)
         }
+        // A create that failed midway is never registered, so delete(vm:)
+        // above cannot see it. Clear the orphaned bundle as well, or a retry
+        // would collide with whatever partial files it left in Data/.
+        let staleBundle = UTMQemuVirtualMachine.virtualMachinePath(for: DroidDeckBuildConfig.vmName,
+                                                                   in: UTMData.defaultStorageUrl)
+        try? FileManager.default.removeItem(at: staleBundle)
         do {
             let config = DroidDeckVMBuilder.makeConfiguration(imageURL: sourceURL)
             _ = try await data.create(config: config)
