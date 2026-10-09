@@ -23,6 +23,10 @@ on:
 env:
   BUILD_XCODE_PATH: ${{ vars.HOST_XCODE_PATH || '/Applications/Xcode.app' }}
 
+# needed for actions/upload-release-asset on release builds
+permissions:
+  contents: write
+
 jobs:
   build-sysroot:
     name: Build Sysroot (${{ matrix.platform }}-${{ matrix.arch }})
